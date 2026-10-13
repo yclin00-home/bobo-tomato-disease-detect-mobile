@@ -108,7 +108,7 @@ def diagnose(image_path):
 
 # ---------- 網頁介面 ----------
 with gr.Blocks(title="Tomato Leaf Disease Diagnosis") as demo:
-    gr.Markdown("# 🍅 Tomato Leaf Disease Diagnosis")
+    gr.Markdown("# Tomato Leaf Disease Diagnosis")
     gr.Markdown("Take a photo of a tomato leaf, or upload one.")
 
     image_input = gr.Image(type="filepath", label="Take or upload a photo",
