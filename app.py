@@ -29,7 +29,7 @@ tf = transforms.Compose([
 ])
 
 
-# ---------- 病斑面積比例 (OpenCV) ----------
+# ---------- 病斑面積比例 (OpenCV)，同時回傳兩張遮罩圖 ----------
 def calc_infection_ratio(img_rgb):
     img_hsv = cv2.cvtColor(cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
 
@@ -46,16 +46,20 @@ def calc_infection_ratio(img_rgb):
     lesion = cv2.bitwise_and(lesion, lesion, mask=leaf_mask)
     lesion = cv2.morphologyEx(lesion, cv2.MORPH_OPEN, kernel)
 
+    # 轉成 3 通道，Gradio 顯示比較穩
+    leaf_rgb = cv2.cvtColor(leaf_mask, cv2.COLOR_GRAY2RGB)
+    lesion_rgb = cv2.cvtColor(lesion, cv2.COLOR_GRAY2RGB)
+
     leaf_px = cv2.countNonZero(leaf_mask)
     if leaf_px == 0:
-        return 0.0
-    return cv2.countNonZero(lesion) / leaf_px * 100.0
+        return 0.0, leaf_rgb, lesion_rgb
+    return cv2.countNonZero(lesion) / leaf_px * 100.0, leaf_rgb, lesion_rgb
 
 
-# ---------- 診斷 ----------
+# ---------- 診斷 (回傳 5 個值：類別、面積比例、建議、葉片遮罩、病斑遮罩) ----------
 def diagnose(image_path):
     if image_path is None:
-        return None, "N/A", "📷 Please take or upload a photo."
+        return None, "N/A", "📷 Please take or upload a photo.", None, None
 
     try:
         img = Image.open(image_path)
@@ -64,7 +68,7 @@ def diagnose(image_path):
         img.thumbnail((MAX_SIDE, MAX_SIDE))
         img = img.convert("RGB")
     except Exception:
-        return None, "N/A", "❌ Cannot read this image. Please try another one."
+        return None, "N/A", "❌ Cannot read this image. Please try another one.", None, None
 
     x = tf(img).unsqueeze(0)
     with torch.no_grad():
@@ -77,16 +81,16 @@ def diagnose(image_path):
 
     if top_conf < MIN_CONF:
         return conf, "N/A", (f"❓ Not sure (best guess: {top}, {top_conf*100:.1f}%). "
-                             "Try a clearer, closer photo of a single leaf.")
+                             "Try a clearer, closer photo of a single leaf."), None, None
 
     if name.startswith("non"):
-        return conf, "N/A", "🚫 **This does not look like a tomato leaf.** Please photograph a tomato leaf."
+        return conf, "N/A", "🚫 **This does not look like a tomato leaf.** Please photograph a tomato leaf.", None, None
 
     if "healthy" in name:
-        return conf, "N/A", f"✅ The leaf looks **healthy** (confidence {top_conf*100:.1f}%)."
+        return conf, "N/A", f"✅ The leaf looks **healthy** (confidence {top_conf*100:.1f}%).", None, None
 
     if "late" in name and "blight" in name:
-        ratio = calc_infection_ratio(np.array(img))
+        ratio, leaf_rgb, lesion_rgb = calc_infection_ratio(np.array(img))
         if ratio < 15:
             msg = (f"💡 Mild late blight (lesions cover {ratio:.1f}%). "
                    "Remove infected leaves promptly and apply an organic copper fungicide.")
@@ -96,10 +100,10 @@ def diagnose(image_path):
         else:
             msg = (f"🚨 Severe late blight (lesions cover {ratio:.1f}%)! "
                    "Remove and destroy the plant to prevent spore spread.")
-        return conf, f"{ratio:.1f}%", msg
+        return conf, f"{ratio:.1f}%", msg, leaf_rgb, lesion_rgb
 
     return conf, "N/A", (f"⚠️ Another tomato disease detected (confidence {top_conf*100:.1f}%). "
-                         "Please check the symptoms and follow the recommended control measures.")
+                         "Please check the symptoms and follow the recommended control measures."), None, None
 
 
 # ---------- 網頁介面 ----------
@@ -115,8 +119,12 @@ with gr.Blocks(title="Tomato Leaf Disease Diagnosis") as demo:
     ratio_output = gr.Textbox(label="Lesion area ratio (late blight only)")
     advice_output = gr.Markdown()
 
+    with gr.Row():
+        leaf_mask_output = gr.Image(label="Leaf mask", type="numpy")
+        lesion_mask_output = gr.Image(label="Lesion mask", type="numpy")
+
     btn.click(diagnose, inputs=[image_input],
-              outputs=[label_output, ratio_output, advice_output])
+              outputs=[label_output, ratio_output, advice_output,
+                       leaf_mask_output, lesion_mask_output])
 
 demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
-#demo.launch(share=True)
